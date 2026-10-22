@@ -12,9 +12,12 @@ It comes with four assistants, ready to use:
 | **Sales Assistant** | Project facts, objection handling and follow-up messages for the sales team. |
 | **General Assistant** | Everyday help: explanations, summaries, formulas, planning. |
 
+Staff can also pick open models directly from the model menu — Qwen, Llama, Mistral and
+DeepSeek by default — for plain chats without company documents.
+
 Built on two free, open-source projects: [Open WebUI](https://github.com/open-webui/open-webui)
-(the chat app) and [Ollama](https://ollama.com) (runs the AI model). This repo only adds the
-configuration and a setup script, so there is nothing to program.
+(the chat app) and [Ollama](https://ollama.com) (runs the AI models). This repo only adds the
+configuration, a theme and a setup script, so there is nothing to program.
 
 ---
 
@@ -31,7 +34,28 @@ configuration and a setup script, so there is nothing to program.
 | PC with an NVIDIA card, 24 GB+ VRAM | `gemma4:26b` | Fast and noticeably smarter. |
 | Mac with Apple Silicon, 24 GB+ | `gemma4:12b` | Fast. See "Mac" under Setup. |
 
-About 10 to 20 GB of free disk space for the models.
+About 10 GB of disk space for the default model, plus 4 to 6 GB for each extra model.
+
+### Models
+
+Two settings in `.env` control the models:
+
+- `CHAT_MODEL` — the one model behind the four assistants. Pick it from the table above.
+- `EXTRA_MODELS` — models staff can choose directly from the model menu. The default list
+  (`qwen3.5:9b,llama3.1:8b,mistral:7b,deepseek-r1:8b`) is the biggest version of each family
+  that fits a 16 GB machine. Set it empty to offer only the four assistants.
+
+Two honest notes about "latest" models:
+- The headline versions of Llama 4 and DeepSeek V3/R1 are data-centre models (70 to 670 billion
+  parameters, 40 to 400 GB). No office PC can run them. `llama3.1:8b` and `deepseek-r1:8b` are the
+  biggest members of those families that fit; `deepseek-r1:8b` is a smaller model trained to
+  imitate the big one's step-by-step reasoning.
+- Only one model is in memory at a time (`OLLAMA_MAX_LOADED_MODELS=1`). When two people use
+  different models, the computer swaps between them, which costs 10 to 60 seconds each time.
+  A graphics card with 24 GB or more can hold two at once: set `OLLAMA_MAX_LOADED_MODELS=2`.
+
+To change models later: edit `.env`, then `docker compose up -d` (downloads anything new) and
+`docker compose run --rm setup` (updates the menu). Documents, users and chats are untouched.
 
 ---
 
@@ -109,6 +133,8 @@ Tip: staff can install it like an app on their phone or desktop. In the browser 
 | Remove a document | Delete it from `company-docs`, then run setup again. |
 | Change what an assistant does | Edit the file in `assistants/`, then run setup again (see below). |
 | Add an assistant | Copy one of the files in `assistants/`, change `id`, `name` and the instructions, run setup. |
+| Add or remove a model from the menu | Edit `EXTRA_MODELS` in `.env`, then `docker compose up -d` and run setup. To take a removed model off the disk: `docker compose exec ollama ollama rm <model>`. |
+| Change colours or fonts | Edit `theme/custom.css`, then `docker compose restart open-webui` and hard-refresh the browser (Ctrl+Shift+R). |
 | Stop | `docker compose down` (data is kept). |
 | Start again | `docker compose up -d` |
 | See logs | `docker compose logs -f open-webui` |
@@ -169,9 +195,11 @@ very long questions or chit-chat retrieve poorly.
 - The AI model is good, not perfect. It can be wrong, especially on numbers and dates.
   The assistants are instructed to say when something is not in the documents, but always
   check important facts against the source document (shown under each answer).
-- The chat app shows `BOT_NAME (Open WebUI)` in the title. Open WebUI's licence allows removing
-  its branding only for deployments of 50 users or fewer, or with their enterprise licence, so
-  this kit leaves it in place. See `https://docs.openwebui.com/license`.
+- The look is set by `theme/custom.css`: a warm cream palette with a terracotta accent, in
+  light and dark mode. It changes colours and fonts only. The chat app still shows
+  `BOT_NAME (Open WebUI)` in the title: Open WebUI's licence allows removing its branding only
+  for deployments of 50 users or fewer, or with their enterprise licence, so this kit leaves it
+  in place. See `https://docs.openwebui.com/license`.
 - Versions pinned in `docker-compose.yml`: Open WebUI v0.12.3, Ollama 0.40.8.
 
 ---

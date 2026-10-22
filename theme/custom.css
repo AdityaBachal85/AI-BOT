@@ -1,0 +1,79 @@
+/* Company AI theme: warm cream palette with a terracotta accent, in the style of
+   modern assistant apps. Loaded by Open WebUI from /static/custom.css.
+   Edit, then: docker compose restart open-webui  (and hard-refresh the browser)
+
+   The app builds every colour from these variables, so changing them restyles
+   everything consistently. Light and dark mode are set separately. */
+
+/* ---------- Light mode ---------- */
+html:not(.dark) {
+  --color-white: #faf9f5;      /* page background */
+  --color-black: #1f1e1a;      /* main text */
+  --color-gray-50: #f3f1ea;    /* sidebar, panels, your messages */
+  --color-gray-100: #ebe8de;
+  --color-gray-200: #ded9cb;   /* borders */
+  --color-gray-300: #cbc5b3;
+  --color-gray-400: #a39d8c;
+  --color-gray-500: #7b7665;   /* secondary text */
+  --color-gray-600: #5f5a4c;
+  --color-gray-700: #46423a;
+  --color-gray-800: #302e28;
+  --color-gray-850: #272521;
+  --color-gray-900: #1f1e1a;
+  --color-gray-950: #15140f;
+}
+
+/* ---------- Dark mode ---------- */
+html.dark {
+  --color-white: #f3f1ea;      /* main text */
+  --color-black: #1a1915;
+  --color-gray-50: #ebe8de;
+  --color-gray-100: #ded9cb;
+  --color-gray-200: #cbc5b3;
+  --color-gray-300: #a39d8c;
+  --color-gray-400: #8a8575;   /* secondary text */
+  --color-gray-500: #6e6a5e;
+  --color-gray-600: #5a574e;
+  --color-gray-700: #45433c;   /* borders */
+  --color-gray-800: #383631;   /* your messages, panels */
+  --color-gray-850: #302e2a;   /* input box */
+  --color-gray-900: #272521;   /* page background */
+  --color-gray-950: #1f1e1a;   /* sidebar */
+}
+
+/* ---------- Accent: primary buttons (send, sign in, save) ---------- */
+:root {
+  --accent: #c96442;
+  --accent-hover: #b4563a;
+}
+html:not(.dark) button.bg-black,
+html.dark button.bg-black {
+  background-color: var(--accent);
+  color: #ffffff;
+}
+html:not(.dark) button.bg-black:hover,
+html.dark button.bg-black:hover {
+  background-color: var(--accent-hover);
+  color: #ffffff;
+}
+
+/* Links and the typing cursor pick up the accent too */
+html:not(.dark) .markdown-prose a,
+html.dark .markdown-prose a {
+  color: var(--accent);
+}
+
+/* Headings inside answers in a serif face, for a calmer, document-like feel */
+.markdown-prose h1,
+.markdown-prose h2,
+.markdown-prose h3 {
+  font-family: Georgia, "Times New Roman", "Noto Serif", serif;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+
+/* Softer corners on the message input and cards */
+:root {
+  --radius-2xl: 1.25rem;
+  --radius-3xl: 1.5rem;
+}

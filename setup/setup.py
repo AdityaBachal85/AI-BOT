@@ -34,6 +34,7 @@ ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "")
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "")
 CHAT_MODEL = os.environ.get("CHAT_MODEL", "gemma4:e4b")
 EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "embeddinggemma")
+EXTRA_MODELS = [m.strip() for m in os.environ.get("EXTRA_MODELS", "").split(",") if m.strip()]
 DEFAULT_ASSISTANT = os.environ.get("DEFAULT_ASSISTANT", "company-knowledge")
 MODEL_WAIT_MINUTES = int(os.environ.get("MODEL_WAIT_MINUTES", "120"))
 
@@ -162,7 +163,7 @@ def model_names(token):
 
 
 def wait_for_models(token):
-    needed = [CHAT_MODEL, EMBEDDING_MODEL]
+    needed = list(dict.fromkeys([CHAT_MODEL, EMBEDDING_MODEL] + EXTRA_MODELS))
     deadline = time.time() + MODEL_WAIT_MINUTES * 60
     announced = False
     while True:
@@ -372,22 +373,60 @@ def get_model(token, model_id):
         raise
 
 
-def register_base_model(token):
-    """Staff can only use an assistant if they may also read its base model.
-    Register the base model as readable by everyone but hidden from the model list."""
-    form = {
-        "id": CHAT_MODEL,
-        "base_model_id": None,
-        "name": CHAT_MODEL,
-        "meta": {"hidden": True, "description": "AI model behind the assistants. Not for direct use."},
-        "params": {},
-        "access_grants": EVERYONE_CAN_READ,
-        "is_active": True,
-    }
-    if get_model(token, CHAT_MODEL):
-        api("POST", "/api/v1/models/model/update", form, token=token)
+BRANDS = {
+    "gpt-oss": "GPT-OSS",
+    "deepseek": "DeepSeek",
+    "mistral": "Mistral",
+    "llama": "Llama",
+    "gemma": "Gemma",
+    "qwen": "Qwen",
+    "phi": "Phi",
+}
+
+
+def friendly_model_name(model_id):
+    """'qwen3.5:9b' -> 'Qwen 3.5 (9B)', 'deepseek-r1:8b' -> 'DeepSeek R1 (8B)'."""
+    family, _, size = model_id.partition(":")
+    for key, brand in BRANDS.items():
+        if family.startswith(key):
+            rest = family[len(key):].strip("-")
+            break
     else:
-        api("POST", "/api/v1/models/create", form, token=token)
+        return model_id
+    parts = [brand]
+    if rest:
+        parts.append(rest.upper() if any(c.isalpha() for c in rest) else rest)
+    if size and size != "latest":
+        parts.append(f"({size.upper()})")
+    return " ".join(parts)
+
+
+def register_models(token):
+    """Staff can use a model only if it is registered and shared with them. The assistants'
+    base model is shared but hidden from the menu; EXTRA_MODELS are shared and visible."""
+    for model_id in dict.fromkeys([CHAT_MODEL] + EXTRA_MODELS):
+        visible = model_id in EXTRA_MODELS
+        form = {
+            "id": model_id,
+            "base_model_id": None,
+            "name": friendly_model_name(model_id) if visible else model_id,
+            "meta": {
+                "hidden": not visible,
+                "description": (
+                    "Open model. Chat directly, without company documents."
+                    if visible
+                    else "AI model behind the assistants. Not for direct use."
+                ),
+                "tags": [{"name": "model"}],
+            },
+            "params": {},
+            "access_grants": EVERYONE_CAN_READ,
+            "is_active": True,
+        }
+        if get_model(token, model_id):
+            api("POST", "/api/v1/models/model/update", form, token=token)
+        else:
+            api("POST", "/api/v1/models/create", form, token=token)
 
 
 def parse_assistant(path):
@@ -461,7 +500,7 @@ def setup_assistants(token, kb):
 
     current = api("GET", "/api/v1/configs/models", token=token)
     default = DEFAULT_ASSISTANT if DEFAULT_ASSISTANT in ids else ids[0]
-    current.update({"DEFAULT_MODELS": default, "MODEL_ORDER_LIST": ids})
+    current.update({"DEFAULT_MODELS": default, "MODEL_ORDER_LIST": ids + EXTRA_MODELS})
     api("POST", "/api/v1/configs/models", current, token=token)
     return ids, default
 
@@ -482,9 +521,11 @@ def main():
         api("POST", "/api/v1/knowledge/reindex", token=token, timeout=3600)
     total, uploaded, failed = sync_documents(token, kb)
 
-    register_base_model(token)
+    register_models(token)
     say(f"Assistants (all using {CHAT_MODEL}):")
     ids, default = setup_assistants(token, kb)
+    if EXTRA_MODELS:
+        say("Also in the model menu: " + ", ".join(friendly_model_name(m) for m in EXTRA_MODELS))
 
     say("\n=== Done ===")
     say(f"Open {PUBLIC_URL} and sign in as {ADMIN_EMAIL}.")
