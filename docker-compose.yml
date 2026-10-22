@@ -1,0 +1,134 @@
+# Internal AI assistant: Open WebUI (chat app) + Ollama (local AI models).
+# Everything runs on your own machine. Nothing is sent to outside AI services.
+#
+#   docker compose up -d            start everything (first run downloads the AI models)
+#   docker compose run --rm setup   create the assistants and load company-docs/ (re-run any time)
+#
+# Settings live in .env. Copy .env.example to .env first.
+
+name: company-ai
+
+x-ollama: &ollama
+  image: ollama/ollama:0.40.8
+  restart: unless-stopped
+  volumes:
+    - ollama-models:/root/.ollama
+  environment:
+    OLLAMA_KEEP_ALIVE: ${OLLAMA_KEEP_ALIVE:-30m}
+    OLLAMA_CONTEXT_LENGTH: ${CONTEXT_LENGTH:-8192}
+  healthcheck:
+    test: ["CMD", "ollama", "list"]
+    interval: 10s
+    timeout: 10s
+    retries: 30
+    start_period: 10s
+
+x-needs-ollama: &needs-ollama
+  # Only one of these runs, picked by COMPOSE_PROFILES in .env.
+  # Neither runs if you use an Ollama installed directly on this computer.
+  ollama:
+    condition: service_healthy
+    required: false
+  ollama-nvidia:
+    condition: service_healthy
+    required: false
+
+services:
+  # Local AI engine, CPU only (any computer). COMPOSE_PROFILES=cpu
+  ollama:
+    <<: *ollama
+    profiles: ["cpu"]
+
+  # Local AI engine using an NVIDIA graphics card. COMPOSE_PROFILES=nvidia
+  ollama-nvidia:
+    <<: *ollama
+    profiles: ["nvidia"]
+    networks:
+      default:
+        aliases: [ollama]
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  # Downloads CHAT_MODEL and EMBEDDING_MODEL, then exits.
+  # Watch progress with: docker compose logs -f model-download
+  model-download:
+    image: ollama/ollama:0.40.8
+    depends_on: *needs-ollama
+    environment:
+      OLLAMA_HOST: ${OLLAMA_URL:-http://ollama:11434}
+      CHAT_MODEL: ${CHAT_MODEL:-gemma4:e4b}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-embeddinggemma}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - ollama pull "$$CHAT_MODEL" && ollama pull "$$EMBEDDING_MODEL" && echo "All AI models are downloaded."
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: on-failure:3
+
+  # The chat app your team uses in the browser.
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:v0.12.3
+    restart: unless-stopped
+    depends_on: *needs-ollama
+    ports:
+      - "${PORT:-3000}:8080"
+    volumes:
+      - open-webui-data:/app/backend/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      WEBUI_NAME: ${BOT_NAME:-Company AI}
+      WEBUI_SECRET_KEY: ${WEBUI_SECRET_KEY:?Set WEBUI_SECRET_KEY in .env (any long random text)}
+      # First admin account, created automatically on the very first start.
+      WEBUI_ADMIN_NAME: ${ADMIN_NAME:-Admin}
+      WEBUI_ADMIN_EMAIL: ${ADMIN_EMAIL:?Set ADMIN_EMAIL in .env}
+      WEBUI_ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Set ADMIN_PASSWORD in .env}
+      # New staff can sign up, but an admin must approve them before they can chat.
+      ENABLE_SIGNUP: "true"
+      DEFAULT_USER_ROLE: pending
+      # Local models only. No OpenAI or other cloud connections.
+      OLLAMA_BASE_URL: ${OLLAMA_URL:-http://ollama:11434}
+      ENABLE_OPENAI_API: "false"
+      # Document search uses a local embedding model served by Ollama.
+      RAG_EMBEDDING_ENGINE: ollama
+      RAG_EMBEDDING_MODEL: ${EMBEDDING_MODEL:-embeddinggemma}
+      RAG_TOP_K: "5"
+      # Privacy: no community sharing, telemetry or Hugging Face downloads.
+      OFFLINE_MODE: "true"
+      ENABLE_COMMUNITY_SHARING: "false"
+      ANONYMIZED_TELEMETRY: "false"
+      DO_NOT_TRACK: "true"
+      SCARF_NO_ANALYTICS: "true"
+
+  # One-off configuration job. Run: docker compose run --rm setup
+  setup:
+    image: ghcr.io/open-webui/open-webui:v0.12.3
+    profiles: ["setup"]
+    depends_on:
+      open-webui:
+        condition: service_started
+    entrypoint: ["python", "/kit/setup/setup.py"]
+    volumes:
+      - ./setup:/kit/setup:ro
+      - ./assistants:/kit/assistants:ro
+      - ./company-docs:/kit/company-docs:ro
+    environment:
+      WEBUI_URL: http://open-webui:8080
+      KIT_DIR: /kit
+      COMPANY_NAME: ${COMPANY_NAME:-our company}
+      ADMIN_EMAIL: ${ADMIN_EMAIL}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD}
+      CHAT_MODEL: ${CHAT_MODEL:-gemma4:e4b}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-embeddinggemma}
+      DEFAULT_ASSISTANT: ${DEFAULT_ASSISTANT:-company-knowledge}
+      PUBLIC_URL: http://localhost:${PORT:-3000}
+    restart: "no"
+
+volumes:
+  ollama-models:
+  open-webui-data:

@@ -1,0 +1,12 @@
+# Holds the admin password and secret key. Never commit it.
+.env
+
+# Your company's documents are private. Keep them out of GitHub.
+company-docs/*
+!company-docs/_README.md
+
+# OS and editor clutter
+.DS_Store
+Thumbs.db
+~$*
+__pycache__/
