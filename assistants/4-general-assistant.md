@@ -4,6 +4,7 @@ name: General Assistant
 description: Everyday helper for questions, ideas, summaries, Excel formulas and more.
 uses_documents: no
 temperature: 0.6
+skills: excel-formulas, summarise, translate
 suggestion: Explain compound interest with a simple example.
 suggestion: Write an Excel formula to calculate a monthly loan instalment.
 suggestion: Summarise this text in five bullet points:

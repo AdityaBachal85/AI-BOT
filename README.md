@@ -3,17 +3,21 @@
 A private, ChatGPT-style assistant for your team. It runs on one of your own computers,
 costs nothing to run, and never sends your data to an outside AI company.
 
-It comes with four assistants, ready to use:
+It comes with an automatic mode and four assistants, ready to use:
 
 | Assistant | What it does |
 |---|---|
+| **Auto** (default) | Reads each message and hands it to the right assistant or model below. Shows "Answered by …" above the reply. |
 | **Company Knowledge** | Answers questions from your company documents, with the source shown. |
 | **Writing Assistant** | Drafts emails, listings, social posts, reports and letters in a professional tone. |
 | **Sales Assistant** | Project facts, objection handling and follow-up messages for the sales team. |
 | **General Assistant** | Everyday help: explanations, summaries, formulas, planning. |
 
 Staff can also pick open models directly from the model menu — Qwen, Llama, Mistral and
-DeepSeek by default — for plain chats without company documents.
+DeepSeek by default — for plain chats without company documents. Ten built-in **skills**
+(email, property listing, WhatsApp follow-up, objection handling, meeting minutes, social post,
+Excel formulas, summarise, translate, report brief) give the assistants a consistent way of
+doing common jobs; type `$` in a message to use any of them in any chat.
 
 Built on two free, open-source projects: [Open WebUI](https://github.com/open-webui/open-webui)
 (the chat app) and [Ollama](https://ollama.com) (runs the AI models). This repo only adds the
@@ -71,8 +75,11 @@ To change models later: edit `.env`, then `docker compose up -d` (downloads anyt
    - `COMPANY_NAME` — used inside the assistants' instructions
    - `ADMIN_EMAIL` and `ADMIN_PASSWORD` — the first admin login
    - `WEBUI_SECRET_KEY` — any long random text
-   - `COMPOSE_PROFILES` — `cpu` or `nvidia` (see the table above)
-   - `CHAT_MODEL` — from the table above
+
+   Then let the computer choose its own models: on Windows right-click `detect-hardware.ps1`
+   and choose *Run with PowerShell*; on Mac/Linux run `sh detect-hardware.sh --apply`.
+   It reads the memory and graphics card and writes `COMPOSE_PROFILES`, `CHAT_MODEL` and
+   `EXTRA_MODELS` into `.env`. (On Windows, add `-Apply` to write; without it, it only prints.)
 
 4. **Add some documents** (optional now, easy to do later). Put PDFs, Word, Excel or text files
    into the `company-docs` folder. Sub-folders are fine.
@@ -135,11 +142,50 @@ Tip: staff can install it like an app on their phone or desktop. In the browser 
 | Add an assistant | Copy one of the files in `assistants/`, change `id`, `name` and the instructions, run setup. |
 | Add or remove a model from the menu | Edit `EXTRA_MODELS` in `.env`, then `docker compose up -d` and run setup. To take a removed model off the disk: `docker compose exec ollama ollama rm <model>`. |
 | Change colours or fonts | Edit `theme/custom.css`, then `docker compose restart open-webui` and hard-refresh the browser (Ctrl+Shift+R). |
+| Add or change a skill | Edit or copy a folder in `skills/`, run setup. |
+| Change what Auto routes where | Admin Panel > Functions > Auto > Valves (or edit `functions/auto.py` and run setup). |
 | Stop | `docker compose down` (data is kept). |
 | Start again | `docker compose up -d` |
 | See logs | `docker compose logs -f open-webui` |
 | Update to a newer version | Pull or download the latest version of this repo, then `docker compose up -d` and run setup again. |
 | Back up | All data lives in two Docker volumes. Stop the stack, then `docker run --rm -v company-ai_open-webui-data:/data -v "$PWD":/backup alpine tar czf /backup/company-ai-backup.tgz /data` |
+
+### How "Auto" decides
+
+Auto is a small program (`functions/auto.py`) installed into the chat app. For each message it
+asks the chat model one short question — "is this about documents, sales, writing, reasoning,
+code or general?" — then hands the whole conversation to the matching assistant, which brings its
+own instructions, temperature, document search and skills. Reasoning goes to the DeepSeek model
+and code or spreadsheet work to Qwen when those are in `EXTRA_MODELS`; otherwise to General.
+Cost: one extra short model call per message. If the choice is ever wrong, staff can pick an
+assistant directly from the menu. Admins can change the targets under
+**Admin Panel > Functions > Auto > Valves**.
+
+### Skills
+
+Each folder in `skills/` holds one `SKILL.md`: a name, a one-line description and the method the
+assistant should follow. Setup loads them all and pins some to each assistant (the `skills:` line
+in the assistant file), so they apply automatically; any skill can also be called in any chat by
+typing `$` and picking it. To add one, copy a folder, edit the text, run setup. Keep them short
+(under 1,500 characters): pinned skills are sent with every message.
+
+These skills are written for this kit. The Claude skills installed in Claude Code (Word, Excel,
+PowerPoint, PDF creation and others) are licensed for use inside Anthropic's services only and
+cannot be copied into another product, which is why they are not included.
+
+### Does it learn?
+
+Not in the way a person does: the model's knowledge is fixed when it is trained. Three things do
+make the bot better over time:
+
+- **Documents** — anything added to `company-docs` is searchable after the next setup run.
+  This is the real "learning" for a company bot.
+- **Memory** — the bot notes useful facts about each user from their chats (team, projects,
+  preferences) and uses them later. Each user can view, edit or switch this off under
+  *Settings > Personalization > Memory*.
+- **Feedback** — the thumbs up/down under every answer is stored (*Admin Panel > Evaluations*).
+  After a few months this gives real examples of good and bad answers; they can be used to
+  fine-tune a model on your company's style, which is a separate project needing a strong GPU.
 
 ### Assistant files
 
@@ -152,6 +198,7 @@ name: Sales Assistant        # shown to staff
 description: One line shown under the name.
 uses_documents: yes          # yes = can search company-docs
 temperature: 0.4             # 0.1 = precise and repetitive, 0.8 = creative
+skills: objection-handling, whatsapp-followup   # folders in skills/, always on for this assistant
 suggestion: A customer says the price is too high. How should I respond?
 suggestion: (as many as you like; shown as buttons on a new chat)
 ---

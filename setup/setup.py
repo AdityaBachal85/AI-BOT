@@ -28,6 +28,9 @@ PUBLIC_URL = os.environ.get("PUBLIC_URL", WEBUI_URL)
 KIT_DIR = Path(os.environ.get("KIT_DIR") or Path(__file__).resolve().parent.parent)
 DOCS_DIR = KIT_DIR / "company-docs"
 ASSISTANTS_DIR = KIT_DIR / "assistants"
+SKILLS_DIR = KIT_DIR / "skills"
+ROUTER_FILE = KIT_DIR / "functions" / "auto.py"
+ROUTER_ID = "auto"
 
 COMPANY_NAME = os.environ.get("COMPANY_NAME", "our company")
 ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "")
@@ -207,6 +210,9 @@ def apply_settings(token):
     tasks = api("GET", "/api/v1/tasks/config", token=token)
     tasks.update(
         {
+            # Chat titles are made by the plain chat model, never routed through "Auto".
+            "TASK_MODEL": CHAT_MODEL,
+            "TASK_MODEL_EXTERNAL": CHAT_MODEL,
             "ENABLE_TITLE_GENERATION": True,
             "ENABLE_TAGS_GENERATION": False,
             "ENABLE_FOLLOW_UP_GENERATION": False,
@@ -361,7 +367,58 @@ def sync_documents(token, kb):
     return len(files), len(to_upload) - len(failed), failed
 
 
-# ------------------------------------------------------------ 5. assistants
+# ---------------------------------------------------------------- 5. skills
+
+
+def parse_skill(path):
+    """A skill is a SKILL.md file: a '---' header with name and description, then instructions."""
+    text = path.read_text(encoding="utf-8").replace("\r\n", "\n")
+    header = {}
+    if text.startswith("---\n") and "\n---\n" in text[4:]:
+        head, _ = text[4:].split("\n---\n", 1)
+        for line in head.splitlines():
+            key, sep, value = line.partition(":")
+            if sep:
+                header[key.strip().lower()] = value.strip().strip('"')
+    return header, text
+
+
+def install_skills(token):
+    """Create or update every skills/<id>/SKILL.md and share it with all users."""
+    ids = []
+    for path in sorted(SKILLS_DIR.glob("*/SKILL.md")):
+        skill_id = path.parent.name
+        header, content = parse_skill(path)
+        form = {
+            "id": skill_id,
+            "name": header.get("name") or skill_id,
+            "description": header.get("description", ""),
+            "content": content,
+        }
+        try:
+            existing = api("GET", f"/api/v1/skills/id/{skill_id}", token=token)
+        except ApiError as e:
+            if e.status not in (401, 404):
+                raise
+            existing = None
+        if existing:
+            api(
+                "POST",
+                f"/api/v1/skills/id/{skill_id}/update",
+                {**form, "expected_version_id": existing.get("version_id")},
+                token=token,
+            )
+            action = "updated"
+        else:
+            api("POST", "/api/v1/skills/create", {**form, "access_grants": EVERYONE_CAN_READ}, token=token)
+            action = "created"
+        api("POST", f"/api/v1/skills/id/{skill_id}/access/update", {"access_grants": EVERYONE_CAN_READ}, token=token)
+        say(f"  {action}: {form['name']}")
+        ids.append(skill_id)
+    return ids
+
+
+# ------------------------------------------------------------ 6. assistants
 
 
 def get_model(token, model_id):
@@ -453,14 +510,20 @@ def parse_assistant(path):
     spec["system"] = body.strip().replace("{COMPANY_NAME}", COMPANY_NAME)
     spec["uses_documents"] = spec.get("uses_documents", "no").lower() in ("yes", "true", "1")
     spec["temperature"] = float(spec.get("temperature", "0.5"))
+    spec["skills"] = [s.strip() for s in spec.get("skills", "").split(",") if s.strip()]
     return spec
 
 
-def upsert_assistant(token, spec, kb):
+def upsert_assistant(token, spec, kb, known_skills):
+    unknown = [s for s in spec["skills"] if s not in known_skills]
+    if unknown:
+        say(f"  warning: {spec['id']} lists skills that do not exist in skills/: {', '.join(unknown)}")
     meta = {
         "description": spec.get("description", ""),
         "suggestion_prompts": [{"content": s} for s in spec["suggestions"]],
         "tags": [{"name": "company"}],
+        # Always-on skills for this assistant; the rest are available by typing "$" in a message.
+        "skillIds": [s for s in spec["skills"] if s in known_skills],
     }
     if spec["uses_documents"]:
         meta["knowledge"] = [{"type": "collection", "id": kb["id"], "name": kb["name"]}]
@@ -486,23 +549,88 @@ def upsert_assistant(token, spec, kb):
     return "created"
 
 
-def setup_assistants(token, kb):
+def setup_assistants(token, kb, known_skills):
     files = sorted(ASSISTANTS_DIR.glob("*.md"))
     if not files:
         fail(f"No assistant files found in {ASSISTANTS_DIR}")
     ids = []
     for path in files:
         spec = parse_assistant(path)
-        action = upsert_assistant(token, spec, kb)
+        action = upsert_assistant(token, spec, kb, known_skills)
         docs = " (uses company documents)" if spec["uses_documents"] else ""
-        say(f'  {action}: {spec["name"]}{docs}')
+        skills = f" + skills: {', '.join(spec['skills'])}" if spec["skills"] else ""
+        say(f'  {action}: {spec["name"]}{docs}{skills}')
         ids.append(spec["id"])
 
     current = api("GET", "/api/v1/configs/models", token=token)
-    default = DEFAULT_ASSISTANT if DEFAULT_ASSISTANT in ids else ids[0]
-    current.update({"DEFAULT_MODELS": default, "MODEL_ORDER_LIST": ids + EXTRA_MODELS})
+    default = DEFAULT_ASSISTANT if DEFAULT_ASSISTANT in ids + [ROUTER_ID] else ROUTER_ID
+    current.update({"DEFAULT_MODELS": default, "MODEL_ORDER_LIST": [ROUTER_ID] + ids + EXTRA_MODELS})
     api("POST", "/api/v1/configs/models", current, token=token)
     return ids, default
+
+
+# ------------------------------------------------------------ 6. auto router
+
+
+def first_match(words):
+    return next((m for m in EXTRA_MODELS if any(w in m for w in words)), "")
+
+
+def install_router(token, kb):
+    """Install the "Auto" pipe function and show it in the menu as a model that
+    searches the company documents and then picks the assistant to answer."""
+    code = ROUTER_FILE.read_text(encoding="utf-8")
+    form = {"id": ROUTER_ID, "name": "Auto", "content": code, "meta": {"description": "Picks the best assistant or model for each message."}}
+    try:
+        existing = api("GET", f"/api/v1/functions/id/{ROUTER_ID}", token=token)
+    except ApiError as e:
+        if e.status not in (401, 404):
+            raise
+        existing = None
+    if existing:
+        api("POST", f"/api/v1/functions/id/{ROUTER_ID}/update", form, token=token)
+        if not existing.get("is_active"):
+            api("POST", f"/api/v1/functions/id/{ROUTER_ID}/toggle", token=token)
+    else:
+        created = api("POST", "/api/v1/functions/create", form, token=token)
+        if not created.get("is_active"):
+            api("POST", f"/api/v1/functions/id/{ROUTER_ID}/toggle", token=token)
+
+    api(
+        "POST",
+        f"/api/v1/functions/id/{ROUTER_ID}/valves/update",
+        {
+            "CLASSIFIER_MODEL": CHAT_MODEL,
+            "REASONING_TARGET": first_match(["deepseek", "r1", "think"]),
+            "CODE_TARGET": first_match(["qwen", "coder"]),
+            "SHOW_CHOICE": True,
+        },
+        token=token,
+    )
+
+    form = {
+        "id": ROUTER_ID,
+        "base_model_id": None,
+        "name": "Auto",
+        "meta": {
+            "description": "Reads your message and picks the best assistant or model to answer it.",
+            "knowledge": [{"type": "collection", "id": kb["id"], "name": kb["name"]}],
+            "suggestion_prompts": [
+                {"content": "What is our leave policy?"},
+                {"content": "Write a follow-up message for a customer who visited yesterday."},
+                {"content": "Draft an email about a delay in document processing."},
+                {"content": "Explain compound interest with a simple example."},
+            ],
+            "tags": [{"name": "company"}],
+        },
+        "params": {"function_calling": "legacy"},
+        "access_grants": EVERYONE_CAN_READ,
+        "is_active": True,
+    }
+    if get_model(token, ROUTER_ID):
+        api("POST", "/api/v1/models/model/update", form, token=token)
+    else:
+        api("POST", "/api/v1/models/create", form, token=token)
 
 
 # -------------------------------------------------------------------- main
@@ -522,8 +650,12 @@ def main():
     total, uploaded, failed = sync_documents(token, kb)
 
     register_models(token)
+    say("Skills:")
+    skill_ids = install_skills(token)
     say(f"Assistants (all using {CHAT_MODEL}):")
-    ids, default = setup_assistants(token, kb)
+    ids, default = setup_assistants(token, kb, skill_ids)
+    install_router(token, kb)
+    say(f"  Auto: picks the assistant per message (reasoning: {first_match(['deepseek', 'r1', 'think']) or 'general'}, code: {first_match(['qwen', 'coder']) or 'general'})")
     if EXTRA_MODELS:
         say("Also in the model menu: " + ", ".join(friendly_model_name(m) for m in EXTRA_MODELS))
 

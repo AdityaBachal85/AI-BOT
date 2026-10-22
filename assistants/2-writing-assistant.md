@@ -4,6 +4,7 @@ name: Writing Assistant
 description: Drafts emails, property listings, social posts, reports and letters.
 uses_documents: yes
 temperature: 0.7
+skills: email, property-listing, social-post, meeting-minutes, report-brief
 suggestion: Write a polite email to a customer about a delay in document processing.
 suggestion: Draft a property listing from these details:
 suggestion: Turn these meeting notes into a short summary with action items:

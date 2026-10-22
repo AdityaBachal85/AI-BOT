@@ -4,6 +4,7 @@ name: Sales Assistant
 description: Helps the sales team with project details, objections and follow-ups.
 uses_documents: yes
 temperature: 0.4
+skills: objection-handling, whatsapp-followup
 suggestion: A customer says the price is too high. How should I respond?
 suggestion: Write a WhatsApp follow-up for a customer who visited the site yesterday.
 suggestion: Compare our projects for a family looking for a 2-bedroom home.

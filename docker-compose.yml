@@ -106,6 +106,9 @@ services:
       RAG_EMBEDDING_ENGINE: ollama
       RAG_EMBEDDING_MODEL: ${EMBEDDING_MODEL:-embeddinggemma}
       RAG_TOP_K: "5"
+      # Memory: the bot notes useful facts about each user from their chats (each user can switch this off).
+      ENABLE_MEMORIES: "true"
+      ENABLE_MEMORY_BACKGROUND_REVIEW: "true"
       # Privacy: no community sharing, telemetry or Hugging Face downloads.
       OFFLINE_MODE: "true"
       ENABLE_COMMUNITY_SHARING: "false"
@@ -124,6 +127,8 @@ services:
     volumes:
       - ./setup:/kit/setup:ro
       - ./assistants:/kit/assistants:ro
+      - ./skills:/kit/skills:ro
+      - ./functions:/kit/functions:ro
       - ./company-docs:/kit/company-docs:ro
     environment:
       WEBUI_URL: http://open-webui:8080
